@@ -1,0 +1,200 @@
+
+
+raw
+Thread endless wave · HTML
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Thread - Endless Wave</title>
+    <style>
+        * { box-sizing: border-box; }
+ 
+        body {
+            margin: 0;
+            background: #0d0d1a;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+            user-select: none;
+            font-family: 'Courier New', monospace;
+        }
+ 
+        canvas {
+            background: #12122a;
+            display: block;
+        }
+ 
+        #hud {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 18px;
+            font-weight: bold;
+            letter-spacing: 0.15em;
+            color: rgba(255, 255, 255, 0.85);
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="hud">SCORE: 0</div>
+    <canvas id="gameCanvas" width="400" height="600"></canvas>
+ 
+<script>
+const canvas = document.getElementById("gameCanvas");
+const ctx    = document.getElementById("gameCanvas").getContext("2d");
+const hud    = document.getElementById("hud");
+ 
+// ── Tuning ────────────────────────────────────────────────────────────────
+const CENTER_X         = canvas.width / 2;
+const PLAYER_Y         = 450;
+const PLAYER_RADIUS    = 8;
+const WAVE_AMPLITUDE   = 80;
+const WAVE_RATE        = 0.05;   // time units added per frame (scaled by speed)
+const BASE_SPEED       = 2;
+const SPEED_GROWTH     = 0.0005;
+const GAP_HALF         = 60;
+const GAP_SPREAD       = 120;    // horizontal range gates are randomized across
+const GATE_H           = 20;
+const GATE_SPAWN_Y     = -50;
+const GATE_SPAWN_GAP   = 180;    // min distance between consecutive gates
+const SCORE_LINE       = PLAYER_Y;
+const COLLISION_TOP    = PLAYER_Y - 10;
+const COLLISION_BOTTOM = PLAYER_Y + 10;
+// ─────────────────────────────────────────────────────────────────────────
+ 
+let score, speed, waveTime, playerX, gates, gameOver, rafId, awaitRestart;
+let inputHeld = false;
+ 
+// ── Input ─────────────────────────────────────────────────────────────────
+// All input listeners are attached once and never removed.
+// awaitRestart gates the restart so a held click at game-over can't
+// immediately re-trigger another game-over screen.
+window.addEventListener("mousedown",  () => { inputHeld = true;  handleRestartInput(); });
+window.addEventListener("mouseup",    () => { inputHeld = false; });
+window.addEventListener("touchstart", (e) => { e.preventDefault(); inputHeld = true; handleRestartInput(); }, { passive: false });
+window.addEventListener("touchend",   () => { inputHeld = false; });
+window.addEventListener("keydown",    (e) => { if (e.code === "Space") { inputHeld = true;  handleRestartInput(); } });
+window.addEventListener("keyup",      (e) => { if (e.code === "Space")   inputHeld = false; });
+ 
+function handleRestartInput() {
+    if (awaitRestart) {
+        awaitRestart = false;
+        startGame();
+    }
+}
+ 
+// ── Gate helpers ──────────────────────────────────────────────────────────
+function spawnGate() {
+    const cx = CENTER_X + (Math.random() * GAP_SPREAD - GAP_SPREAD / 2);
+    gates.push({ y: GATE_SPAWN_Y, left: cx - GAP_HALF, right: cx + GAP_HALF, scored: false });
+}
+ 
+function gateHitsPlayer(g) {
+    if (g.y < COLLISION_TOP || g.y > COLLISION_BOTTOM) return false;
+    return playerX < g.left || playerX > g.right;
+}
+ 
+// ── Render helpers ────────────────────────────────────────────────────────
+function drawGate(g) {
+    ctx.fillStyle = "#ff0055";
+    ctx.fillRect(0,         g.y, g.left,              GATE_H);
+    ctx.fillRect(g.right,   g.y, canvas.width - g.right, GATE_H);
+}
+ 
+function drawPlayer() {
+    ctx.save();
+    ctx.shadowBlur  = 14;
+    ctx.shadowColor = "#00f5ff";
+    ctx.fillStyle   = "#00f5ff";
+    ctx.beginPath();
+    ctx.arc(playerX, PLAYER_Y, PLAYER_RADIUS, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore(); // shadow contained — won't bleed onto next draws
+}
+ 
+function drawGameOver() {
+    ctx.fillStyle = "rgba(0, 0, 0, 0.72)";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+ 
+    ctx.fillStyle   = "#ffffff";
+    ctx.textAlign   = "center";
+    ctx.font        = "bold 28px 'Courier New', monospace";
+    ctx.fillText("GAME OVER", CENTER_X, 270);
+ 
+    ctx.font        = "14px 'Courier New', monospace";
+    ctx.fillStyle   = "rgba(255,255,255,0.55)";
+    ctx.fillText("SCORE  " + score, CENTER_X, 305);
+    ctx.fillText("click · tap · space  to retry", CENTER_X, 345);
+}
+ 
+// ── Core loop ─────────────────────────────────────────────────────────────
+function loop() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+ 
+    if (gameOver) {
+        drawGameOver();
+        // Short delay so the click that caused death can't instantly restart.
+        setTimeout(() => { awaitRestart = true; }, 500);
+        return; // stops rAF chain
+    }
+ 
+    // Speed ramp
+    speed += SPEED_GROWTH;
+ 
+    // Wave: freeze time while held so the dot stays put; resume on release.
+    if (!inputHeld) waveTime += speed * WAVE_RATE;
+    playerX = CENTER_X + Math.sin(waveTime) * WAVE_AMPLITUDE;
+ 
+    // Spawn gates
+    if (gates.length === 0 || gates[gates.length - 1].y > GATE_SPAWN_GAP) {
+        spawnGate();
+    }
+ 
+    // Update & draw gates (iterate backwards so splice is safe)
+    for (let i = gates.length - 1; i >= 0; i--) {
+        const g = gates[i];
+        g.y += speed;
+ 
+        drawGate(g);
+ 
+        if (!g.scored && g.y > SCORE_LINE) {
+            g.scored = true;
+            score++;
+            hud.innerText = "SCORE: " + score;
+        }
+ 
+        if (gateHitsPlayer(g)) { gameOver = true; }
+        if (g.y > canvas.height) { gates.splice(i, 1); }
+    }
+ 
+    drawPlayer();
+ 
+    rafId = requestAnimationFrame(loop);
+}
+ 
+// ── Init ──────────────────────────────────────────────────────────────────
+function startGame() {
+    score        = 0;
+    speed        = BASE_SPEED;
+    waveTime     = 0;
+    playerX      = CENTER_X;
+    gates        = [];
+    gameOver     = false;
+    awaitRestart = false;
+    inputHeld    = false;
+    hud.innerText = "SCORE: 0";
+ 
+    cancelAnimationFrame(rafId);       // kill any lingering loop before starting fresh
+    rafId = requestAnimationFrame(loop);
+}
+ 
+startGame();
+</script>
+</body>
+</html>
